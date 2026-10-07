@@ -5,7 +5,7 @@
 
 import 'dart:async';
 import 'dart:convert'; // + ES
-
+import 'session_store.dart';
 import 'package:battery_plus/battery_plus.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
@@ -25,6 +25,7 @@ import 'accelerometer_service.dart';
 import 'api_service.dart';
 import 'geofence_service.dart';
 import 'location_service.dart';
+
 
 Future<void> initializeBackgroundService() async {
   final service = FlutterBackgroundService();
@@ -95,6 +96,10 @@ void onStart(ServiceInstance service) async {
     final id = event?['promptId'];
     if (id is String) session.resolvePrompt(id);
   });
+  SessionStore.read().then((saved) {
+    if (saved != null) session.start(Map<String, dynamic>.from(saved));
+  });
+
 }
 
 class _RecordingSession {
@@ -154,7 +159,17 @@ class _RecordingSession {
     final geojson = (event['geojson'] as String?) ?? '';
 
     _recording = true;
-    _startedAt = DateTime.now();
+    // + S3: resume with the original start time if present, else start now.
+    final savedStart = event['startedAtMillis'];
+    _startedAt = savedStart is int
+        ? DateTime.fromMillisecondsSinceEpoch(savedStart)
+        : DateTime.now();
+
+    // + S3: persist the full session so the app can route back / resume.
+    //       Reuse the event, but guarantee startedAtMillis is stored.
+    final toSave = Map<String, dynamic>.from(event);
+    toSave['startedAtMillis'] = _startedAt!.millisecondsSinceEpoch;
+    SessionStore.save(toSave);
     _gforceActive = _config.gForceEnabled;
 
     final geofenceControlsStart = _config.geofencingEnabled &&
@@ -446,7 +461,7 @@ class _RecordingSession {
   Future<void> stop() async {
     if (!_recording) return;
     _recording = false;
-
+    SessionStore.clear(); // + S3: recording ended, drop the saved session
     await _gpsSub?.cancel();
     _gpsSub = null;
     _location.stop();

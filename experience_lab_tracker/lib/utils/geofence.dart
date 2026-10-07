@@ -5,15 +5,26 @@ import 'dart:convert';
 class GeoZone {
   final String name;
   final List<List<double>> polygon; // list of [lon, lat]
+  final double area; // relative area, used to pick the innermost zone
 
-  const GeoZone({required this.name, required this.polygon});
+  GeoZone({required this.name, required this.polygon})
+      : area = _absPolygonArea(polygon);
 }
 
-/// Parses a GeoJSON FeatureCollection (the same format the Streamlit
-/// Geofence Builder produces) into a list of named zones.
-///
-/// Supports Polygon geometries. The zone name comes from
-/// feature.properties.name, falling back to "Zone_N".
+/// Shoelace area (absolute). Computed on raw lon/lat degrees, which is fine
+/// because we only ever COMPARE areas to each other, never report them.
+double _absPolygonArea(List<List<double>> poly) {
+  double sum = 0;
+  final n = poly.length;
+  for (var i = 0; i < n; i++) {
+    final j = (i + 1) % n;
+    sum += poly[i][0] * poly[j][1] - poly[j][0] * poly[i][1];
+  }
+  return sum.abs() / 2.0;
+}
+
+/// Parses a GeoJSON FeatureCollection into a list of named zones.
+/// Zone name comes from feature.properties.name, falling back to "Zone_N".
 List<GeoZone> parseGeoJson(String geoJsonString) {
   final zones = <GeoZone>[];
   if (geoJsonString.trim().isEmpty) return zones;
@@ -41,8 +52,6 @@ List<GeoZone> parseGeoJson(String geoJsonString) {
     final coords = geometry['coordinates'];
     if (type != 'Polygon' || coords is! List || coords.isEmpty) continue;
 
-    // A Polygon is a list of linear rings; the first ring is the outer
-    // boundary. We ignore holes for this use case.
     final outerRing = coords.first;
     if (outerRing is! List) continue;
 
@@ -65,11 +74,7 @@ List<GeoZone> parseGeoJson(String geoJsonString) {
   return zones;
 }
 
-/// Ray-casting point-in-polygon test. Returns true if (lat, lon) is inside
-/// the polygon. Polygon vertices are [lon, lat] pairs.
-///
-/// This is the direct equivalent of the Android app's
-/// GeofenceMath.isPointInPolygon().
+/// Ray-casting point-in-polygon test. Polygon vertices are [lon, lat] pairs.
 bool isPointInPolygon(double lat, double lon, List<List<double>> polygon) {
   var inside = false;
   final n = polygon.length;
@@ -88,11 +93,21 @@ bool isPointInPolygon(double lat, double lon, List<List<double>> polygon) {
   return inside;
 }
 
-/// Returns the name of the first zone that contains the point, or null if the
-/// point is outside every zone.
+/// Returns the name of the zone that contains the point.
+///
+/// FIX FOR NESTED ZONES: when the point falls inside more than one polygon
+/// (for example a small Zone_2 sitting inside a big boundary Zone_1), we return
+/// the SMALLEST one, i.e. the most specific / innermost zone. This is what lets
+/// a point-of-interest inside the overall boundary be detected instead of being
+/// swallowed by the big zone. Returns null if the point is outside every zone.
 String? zoneForPoint(double lat, double lon, List<GeoZone> zones) {
+  GeoZone? best;
   for (final z in zones) {
-    if (isPointInPolygon(lat, lon, z.polygon)) return z.name;
+    if (isPointInPolygon(lat, lon, z.polygon)) {
+      if (best == null || z.area < best.area) {
+        best = z;
+      }
+    }
   }
-  return null;
+  return best?.name;
 }

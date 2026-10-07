@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-
+import '../providers/recording_provider.dart'; // + S3
 import '../models/project.dart';
 import '../providers/project_provider.dart';
 import '../services/permission_service.dart';
@@ -23,7 +23,18 @@ class _ProjectSelectionScreenState extends State<ProjectSelectionScreen> {
   }
 
   Future<void> _onProjectTapped(Project project) async {
-    // 1. Prominent data-collection disclosure (required by app stores).
+    // + S3: refuse to open a new project while a session is already recording.
+    final active = await RecordingProvider.activeSession();
+    if (active != null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text(
+            'A recording is already in progress. Stop it before starting another.'),
+      ));
+      return;
+    }
+
+    // 1. Prominent data-collection disclosure.
     final consented = await _showDisclosure();
     if (!consented || !mounted) return;
 
@@ -38,8 +49,7 @@ class _ProjectSelectionScreenState extends State<ProjectSelectionScreen> {
     }
 
     // 3. Download project settings + geofence.
-    final ok =
-        await context.read<ProjectProvider>().selectProject(project);
+    final ok = await context.read<ProjectProvider>().selectProject(project);
     if (!mounted) return;
     if (ok) {
       Navigator.of(context).push(MaterialPageRoute(

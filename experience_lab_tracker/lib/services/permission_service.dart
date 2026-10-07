@@ -62,10 +62,20 @@ class PermissionService {
       // once while-in-use has been granted.
       await Geolocator.requestPermission();
     }
-
+    await requestBatteryExemption();
     return const PermissionResult(true, 'Permissions granted.');
   }
 
+  static Future<void> requestBatteryExemption() async {
+    if (Platform.isAndroid) {
+      final status = await Permission.ignoreBatteryOptimizations.status;
+      if (!status.isGranted) {
+        await Permission.ignoreBatteryOptimizations.request();
+      }
+    }
+  }
+
+  /* We created this function in order to check if the foreground location */
   static Future<bool> hasForegroundLocation() async {
     final perm = await Geolocator.checkPermission();
     return perm == LocationPermission.always ||
